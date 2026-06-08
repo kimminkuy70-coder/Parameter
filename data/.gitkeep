@@ -1,0 +1,6 @@
+# 사용법
+# 1. Python 설치: https://www.python.org/downloads/
+# 2. pip install -r requirements.txt
+# 3. python main.py
+
+# 주의: Anaconda 불필요 — 표준 Python + pip만 사용
