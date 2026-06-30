@@ -109,8 +109,12 @@ def sync_source_into_repo(cfg):
                          f"--source 인자나 CONFIG['SOURCE_DIR'] 를 설정하세요.")
     dest = repo if not cfg["DEST_SUBDIR"] else os.path.join(repo, cfg["DEST_SUBDIR"])
 
-    # 소스가 저장소 내부면 복사 불필요
-    if os.path.commonpath([src, repo]) == repo:
+    # 소스가 저장소 내부면 복사 불필요 (다른 드라이브면 commonpath가 에러 → 내부 아님)
+    try:
+        inside = os.path.commonpath([src, repo]) == repo
+    except ValueError:
+        inside = False  # Windows에서 서로 다른 드라이브(C: vs E:)인 경우
+    if inside:
         log("소스가 저장소 내부 → 복사 생략, 그대로 커밋합니다.")
         return
     os.makedirs(dest, exist_ok=True)
