@@ -1,0 +1,5 @@
+Recipe,Lot,Wafer,Void Percentage,Void Count (by Area),Void Count (by Diameter)
+kV3,86um,126173086.01,2.0~5.5%,0,0
+kV3,86um,126173086.01,5.5~8.5%,0,0
+kV3,86um,126173086.01,8.5~10.5%,0,0
+kV3,86um,126173086.01,10.5~100.0%,0,0
