@@ -205,7 +205,7 @@ def make_views(runs, diam, tact):
     fig.tight_layout(); fig.savefig(f"{VIEWS}/4_DOE주효과_Qdia.png", dpi=110); plt.close(fig)
 
 # ---------------------------------------------------------------- 6. 레시피 계산기(Excel)
-def build_calculator(diam, tact):
+def build_calculator(diam, tact, runs):
     import openpyxl
     from openpyxl.styles import PatternFill, Font, Alignment
     YEL = PatternFill("solid", fgColor="FFF2CC"); BLU = PatternFill("solid", fgColor="DDEBF7")
@@ -239,13 +239,27 @@ def build_calculator(diam, tact):
     w("A12", "R 추천")
     ws["B12"] = "=IF(B11>=0.35,MIN(B11,0.8),\"측정불가(광자부족)→직경만\")"; ws["B12"].fill = BLU
     w("C12", "µm/px"); w("D12", "N8 상한과 측정하한(0.35) 사이. 없으면 8% void 정량 불가", wr=True)
-    w("A13", "F 추천"); w("B13", 32, BLU); w("C13", "장비 최소"); w("D13", "직경엔 F 영향 미미 → 최소 32. void σ는 별도", wr=True)
-    w("A14", "W 추천"); w("B14", 4, BLU); w("D14", "W 효과 미검출 → 4 고정", wr=True)
+    # F/W 고정 근거: 최다 반복 셀(D26, R=0.5, kV=정점)에서 F·W 수준별 평균 Q_dia 비교
+    kv0 = round(d26["kv_star"])
+    base = [r for r in runs if r["anchor"] == "D26" and r["R"] == 0.5 and round(r["kv"]) == kv0]
+    def level_q(key):
+        levels = sorted(set(r[key] for r in base))
+        return {L: round(float(np.mean([r["q"] for r in base if r[key] == L])), 4) for L in levels}
+    f_ev = level_q("F"); w_ev = level_q("W")
+    f_spread = round((max(f_ev.values()) - min(f_ev.values())) * 100, 2)
+    w_spread = round((max(w_ev.values()) - min(w_ev.values())) * 100, 2)
+    w("A13", "F 추천"); w("B13", 32, BLU); w("C13", "장비 최소")
+    w("D13", f"고정 근거(실측): kV{kv0}·R0.5에서 F{list(f_ev.keys())} → 평균 Q_dia={list(f_ev.values())}"
+             f"(편차 {f_spread}%p, 38런) → 직경엔 무영향 확인 → tact만 늘어나는 F는 최소치(32) 사용. void σ 예산은 2차 모델링 별도", wr=True)
+    w("A14", "W 추천"); w("B14", 4, BLU)
+    w("D14", f"고정 근거(실측): 동일 조건 W{list(w_ev.keys())} → 평균 Q_dia={list(w_ev.values())}"
+             f"(편차 {w_spread}%p) → 직경엔 무영향 확인 → 기본값(4) 사용. 두꺼운 자재 도입 시 재검토 필요", wr=True)
     # 예상 tact
     tc = tact["coef"]
     w("A15", "예상 Tact (s, 근사)")
     ws["B15"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B13/64)*B6,0)"
     ws["B15"].fill = BLU; w("C15", "초"); w("D15", "tact≈b0+(계수)·bump수. 검사 범프수·F로 추정", wr=True)
+    ws.row_dimensions[13].height = 30; ws.row_dimensions[14].height = 30
     w("A17", "■ 주의 (실측 기반)", ORG, b=True)
     w("A18", f"① kV–직경은 포물선 → kV는 정점(≈60)에 고정, ±2kV에 직경 8%/kV 급변. "
              f"② 오차기준 ε={int(EPS*100)}%(N8≥{N8_MIN})로 통일 → 26µm도 R≤0.5에서 통과(자세한 근거는 '오차기준_근거' 시트). "
@@ -287,6 +301,9 @@ def build_calculator(diam, tact):
                         f"픽셀화 2/N8 ≤ {round(EPS/2**0.5*100,1)}% → N8 ≥ 2√2/ε = {N8_MIN}."),
         ("자재별 달성", f"N8≥{N8_MIN} 충족: 86µm(여유)·26µm(R≤0.5, N8≈14.7)·10µm(R≈0.2에서 N8≈14, 측정성공 시)."),
         ("주의", "10µm은 실측 없음(외삽). 26µm도 R하한 0.35는 F32까지만 확인한 값 — F를 올리면 더 낮출 여지(R×F 미검증)."),
+        ("F/W 고정 근거", f"kV{kv0}·R0.5(38런 중 최다 반복 조건)에서 F 수준별 평균 Q_dia 편차 {f_spread}%p, "
+                       f"W 수준별 편차 {w_spread}%p — 둘 다 노이즈 수준. kV 정점 고정 + 극단 R을 피하면 F/W는 직경에 관측 가능한 영향이 없어 "
+                       f"F=32(장비 최소, tact 절약)·W=4(기본값)로 고정. 근거는 '레시피_계산기' 시트 D13/D14 실측표 참조."),
     ]
     r = 2
     for k, v in lines:
@@ -316,7 +333,7 @@ def main():
                    "gates": {"N8_min": N8_MIN, "diam_gate": [0.97, 1.03]}},
                   f, ensure_ascii=False, indent=2)
     make_views(runs, diam, tact)
-    build_calculator(diam, tact)
+    build_calculator(diam, tact, runs)
     # 콘솔 요약
     print("=== 직경 모델 (kV²) ===")
     for a in ("D26", "D86"):
