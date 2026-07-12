@@ -191,17 +191,33 @@ def make_views(runs, diam, tact):
     ax.set_title(f"Tact 모델 (bump수·F)  R²={tact['r2']}")
     fig.tight_layout(); fig.savefig(f"{VIEWS}/3_Tact_실측vs예측.png", dpi=110); plt.close(fig)
 
-    # (4) DOE 주효과 (Q_dia): 각 인자 수준별 평균 Q
-    fig, axes = plt.subplots(1, 4, figsize=(13, 3.4), sharey=True)
-    for ax, fac in zip(axes, ["kv", "R", "F", "W"]):
+    # (4) DOE 주효과 (Q_dia) — 교락 제거판
+    #   kV : 전체 데이터(정점 포물선이 목적)
+    #   R/F/W : kV를 각 자재의 정점 레벨에 고정한 뒤 수준별 평균 → 교락 제거
+    #   같은 y축 + 각 패널에 peak-to-peak(Δ%p) 표기 → kV만 크고 R/F/W는 평탄함이 한눈에 보이게.
+    vtx = {a: min(sorted(set(r["kv"] for r in runs if r["anchor"] == a)),
+                  key=lambda L: abs(L - diam[a]["kv_star"])) for a in ("D26", "D86")}
+    fig, axes = plt.subplots(1, 4, figsize=(13.5, 3.8), sharey=True)
+    facs = [("kv", None), ("R", "kv"), ("F", "kv"), ("W", "kv")]
+    for ax, (fac, fixkey) in zip(axes, facs):
+        deltas = []
         for anchor in ("D26", "D86"):
             rr = [r for r in runs if r["anchor"] == anchor]
+            if fixkey == "kv":                      # 정점 kV로 고정 → 교락 제거
+                rr = [r for r in rr if r["kv"] == vtx[anchor]]
             levels = sorted(set(r[fac] for r in rr))
-            means = [np.mean([r["q"] for r in rr if r[fac] == L]) for L in levels]
-            ax.plot(levels, means, "o-", color=C[anchor], label=anchor)
-        ax.set_title(f"{fac} 주효과"); ax.set_xlabel(fac); ax.grid(alpha=.3)
-    axes[0].set_ylabel("평균 Q_dia"); axes[0].legend(fontsize=8)
-    fig.suptitle("DOE 주효과 (Q_dia) — kV가 지배적, R/F/W는 미미")
+            means = [float(np.mean([r["q"] for r in rr if r[fac] == L])) for L in levels]
+            deltas.append((max(means) - min(means)) * 100)
+            ax.plot(levels, means, "o-", color=C[anchor], lw=1.8, ms=6,
+                    label=f"{anchor}" + (f" (Δ{(max(means)-min(means))*100:.1f}%p)"))
+        ax.axhspan(0.97, 1.03, color="green", alpha=.06)   # 직경 Gate = '무영향' 기준띠
+        dtag = "포물선(정점≈60)" if fac == "kv" else f"평탄 Δ≤{max(deltas):.1f}%p"
+        cond = "" if fac == "kv" else f"\n(kV=정점 고정: 26µm={vtx['D26']:.0f}, 86µm={vtx['D86']:.0f})"
+        ax.set_title(f"{fac} 주효과 — {dtag}{cond}", fontsize=9)
+        ax.set_xlabel(fac); ax.grid(alpha=.3); ax.legend(fontsize=7.5)
+    axes[0].set_ylabel("평균 Q_dia (측정/PD)")
+    fig.suptitle("DOE 주효과 (Q_dia) — kV는 20%p 급변(포물선), R/F/W는 kV 고정 시 초록띠 안 평탄 = 직경 무영향",
+                 fontsize=11)
     fig.tight_layout(); fig.savefig(f"{VIEWS}/4_DOE주효과_Qdia.png", dpi=110); plt.close(fig)
 
 # ---------------------------------------------------------------- 6. 레시피 계산기(Excel)
