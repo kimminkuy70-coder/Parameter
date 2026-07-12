@@ -232,8 +232,8 @@ def build_calculator(diam, tact):
     w("A10", "예측 Q_dia @ kV*")
     ws["B10"] = f"=ROUND({d26['q_at_star']}+({d86['q_at_star']}-{d26['q_at_star']})/(86-26)*(B5-26),3)"
     ws["B10"].fill = BLU; w("C10", "-"); w("D10", "정점에서 얻는 최대 Q(≈1). 26µm은 ~0.98가 한계", wr=True)
-    # R : N8 게이트 상한 = D·√0.08 / 29
-    w("A11", "R 상한 (N8≥29)")
+    # R : N8 게이트 상한 = D·√0.08 / N8_MIN
+    w("A11", f"R 상한 (N8≥{N8_MIN}, ε={int(EPS*100)}%)")
     ws["B11"] = f"=ROUND(B5*{round(SQRT_P,4)}/{N8_MIN},2)"; ws["B11"].fill = BLU
     w("C11", "µm/px"); w("D11", "이 값 이하라야 8% void 해상도 확보. 26µm은 측정가능 R보다 작아 달성 불가", wr=True)
     w("A12", "R 추천")
