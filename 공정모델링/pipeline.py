@@ -176,7 +176,7 @@ def make_views(runs, diam, tact):
         ax.scatter([r["R"] for r in rr], [r["n8"] for r in rr], s=28, color=C[anchor], alpha=.6, label=anchor)
     ax.axhline(N8_MIN, color="red", ls="--", label=f"N8 Gate = {N8_MIN}")
     ax.set_xlabel("R (µm/px)"); ax.set_ylabel("N8 = 측정직경·√0.08 / R")
-    ax.set_title("N8 해상도 Gate: 26µm은 전 조건 미달, 86µm은 R≤0.8 통과")
+    ax.set_title(f"N8 해상도 Gate(N8≥{N8_MIN}): 26µm은 R≤0.5, 86µm은 R≤1.5(정점kV 기준) 통과")
     ax.legend(fontsize=8); fig.tight_layout(); fig.savefig(f"{VIEWS}/2_N8Gate_N8vsR.png", dpi=110); plt.close(fig)
 
     # (3) Tact: 실측 vs 예측
@@ -248,14 +248,25 @@ def build_calculator(diam, tact, runs):
     w("A10", "예측 Q_dia @ kV*")
     ws["B10"] = f"=ROUND({d26['q_at_star']}+({d86['q_at_star']}-{d26['q_at_star']})/(86-26)*(B5-26),3)"
     ws["B10"].fill = BLU; w("C10", "-"); w("D10", "정점에서 얻는 최대 Q(≈1). 26µm은 ~0.98가 한계", wr=True)
-    # R : N8 게이트 상한 = D·√0.08 / N8_MIN
-    w("A11", f"R 상한 (N8≥{N8_MIN}, ε={int(EPS*100)}%)")
+    # ── R : 이론 상한(N8 게이트 공식) vs 실측 확인값(F32·정점kV, 두 게이트 통과) ──
+    # 실측확인 R: D26=0.5(D26-08), D86=0.8(D86-08) — 둘 다 F=32·정점kV에서 유일하게 확인된 값.
+    # N8 공식은 R×F 상호작용이 없다고 가정(회귀가 additive)한 이론치라 실측확인보다 낙관적일 수 있음.
+    R_CONF_26, R_CONF_86 = 0.5, 0.8
+    w("A11", f"R 상한 (이론, N8≥{N8_MIN} 공식)")
     ws["B11"] = f"=ROUND(B5*{round(SQRT_P,4)}/{N8_MIN},2)"; ws["B11"].fill = BLU
-    w("C11", "µm/px"); w("D11", "이 값 이하라야 8% void 해상도 확보. 26µm은 측정가능 R보다 작아 달성 불가", wr=True)
-    w("A12", "R 추천")
-    ws["B12"] = "=IF(B11>=0.35,MIN(B11,0.8),\"측정불가(광자부족)→직경만\")"; ws["B12"].fill = BLU
-    w("C12", "µm/px"); w("D12", "N8 상한과 측정하한(0.35) 사이. 없으면 8% void 정량 불가", wr=True)
-    # F/W 고정 근거: 최다 반복 셀(D26, R=0.5, kV=정점)에서 F·W 수준별 평균 Q_dia 비교
+    w("C11", "µm/px"); w("D11", "N8 게이트 공식값. F가 N8에 영향 없다는 가정(additive 회귀) 하의 이론 상한", wr=True)
+    w("A12", "R 실측 확인 상한 (F=32·정점kV)")
+    ws["B12"] = f"=ROUND({R_CONF_26}+({R_CONF_86}-{R_CONF_26})/(86-26)*(B5-26),2)"; ws["B12"].fill = BLU
+    w("C12", "µm/px"); w("D12", "F=32·정점kV 조합에서 실제로 두 게이트를 통과한 값(26µm=0.5, 86µm=0.8, 2anchor 보간). "
+             "이 값을 넘는 R은 F=32에서 미검증(Phase B1 대상)", wr=True)
+    w("A13", "R 권장 범위 (하한~상한)")
+    ws["B13"] = "=\"0.2(장비 하한) ~ \"&TEXT(MIN(B11,B12),\"0.00\")&\" µm/px\""; ws["B13"].fill = BLU
+    w("C13", ""); w("D13", "권장 상한 = 이론·실측확인 중 더 보수적인 값(=MIN). 하한 0.2는 장비 물리 하한(광자부족 위험 구간)", wr=True)
+    w("A14", "R 추천")
+    ws["B14"] = "=MIN(B11,B12)"; ws["B14"].fill = BLU
+    w("C14", "µm/px"); w("D14", "범위 내 가장 거친(빠른) R — 해상도 여유를 최소로 쓰는 값. 이 이상 낮추려면 Phase B1(R×F) 확인 필요", wr=True)
+
+    # ── F/W 고정 근거: 최다 반복 셀(D26, R=0.5, kV=정점)에서 F·W 수준별 평균 Q_dia 비교 ──
     kv0 = round(d26["kv_star"])
     base = [r for r in runs if r["anchor"] == "D26" and r["R"] == 0.5 and round(r["kv"]) == kv0]
     def level_q(key):
@@ -264,25 +275,33 @@ def build_calculator(diam, tact, runs):
     f_ev = level_q("F"); w_ev = level_q("W")
     f_spread = round((max(f_ev.values()) - min(f_ev.values())) * 100, 2)
     w_spread = round((max(w_ev.values()) - min(w_ev.values())) * 100, 2)
-    w("A13", "F 추천"); w("B13", 32, BLU); w("C13", "장비 최소")
-    w("D13", f"고정 근거(실측): kV{kv0}·R0.5에서 F{list(f_ev.keys())} → 평균 Q_dia={list(f_ev.values())}"
-             f"(편차 {f_spread}%p, 38런) → 직경엔 무영향 확인 → tact만 늘어나는 F는 최소치(32) 사용. void σ 예산은 2차 모델링 별도", wr=True)
-    w("A14", "W 추천"); w("B14", 4, BLU)
-    w("D14", f"고정 근거(실측): 동일 조건 W{list(w_ev.keys())} → 평균 Q_dia={list(w_ev.values())}"
-             f"(편차 {w_spread}%p) → 직경엔 무영향 확인 → 기본값(4) 사용. 두꺼운 자재 도입 시 재검토 필요", wr=True)
+    f_lv = list(f_ev.keys()); w_lv = list(w_ev.keys())
+    w("A15", "F 범위 (테스트 확인)")
+    w("B15", f"{int(min(f_lv))} ~ {int(max(f_lv))}", BLU); w("C15", "장비 배율")
+    w("D15", f"실측 테스트 구간(kV{kv0}·R0.5): F{f_lv} → 평균 Q_dia={list(f_ev.values())}(편차 {f_spread}%p) → 전 구간 직경 무영향", wr=True)
+    w("A16", "F 추천"); w("B16", 32, BLU); w("C16", "장비 최소")
+    w("D16", "직경 무영향 확인 구간의 최소값 사용 → tact만 아끼는 선택. void σ 예산(2차 모델링)이 정해지면 상향될 수 있음", wr=True)
+    w("A17", "W 범위 (테스트 확인)")
+    w("B17", f"{min(w_lv):g} ~ {max(w_lv):g}", BLU); w("C17", "")
+    w("D17", f"실측 테스트 구간(동일 조건): W{w_lv} → 평균 Q_dia={list(w_ev.values())}(편차 {w_spread}%p) → 전 구간 직경 무영향", wr=True)
+    w("A18", "W 추천"); w("B18", 4, BLU)
+    w("D18", "직경 무영향 확인 구간의 기본값(최소) 사용. 두꺼운 자재 도입 시(SNR 부족) 재검토 필요", wr=True)
+
     # 예상 tact
     tc = tact["coef"]
-    w("A15", "예상 Tact (s, 근사)")
-    ws["B15"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B13/64)*B6,0)"
-    ws["B15"].fill = BLU; w("C15", "초"); w("D15", "tact≈b0+(계수)·bump수. 검사 범프수·F로 추정", wr=True)
-    ws.row_dimensions[13].height = 30; ws.row_dimensions[14].height = 30
-    w("A17", "■ 주의 (실측 기반)", ORG, b=True)
-    w("A18", f"① kV–직경은 포물선 → kV는 정점(≈60)에 고정, ±2kV에 직경 8%/kV 급변. "
+    w("A19", "예상 Tact (s, 근사)")
+    ws["B19"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B16/64)*B6,0)"
+    ws["B19"].fill = BLU; w("C19", "초"); w("D19", "tact≈b0+(계수)·bump수. 검사 범프수·F로 추정", wr=True)
+    for rr in (11, 12, 15, 17): ws.row_dimensions[rr].height = 30
+
+    w("A21", "■ 주의 (실측 기반)", ORG, b=True)
+    w("A22", f"① kV–직경은 포물선 → kV는 정점(≈60)에 고정, ±2kV에 직경 8%/kV 급변. "
              f"② 오차기준 ε={int(EPS*100)}%(N8≥{N8_MIN})로 통일 → 26µm도 R≤0.5에서 통과(자세한 근거는 '오차기준_근거' 시트). "
-             f"③ void 판정 정확도(False OK/NG)는 8% 근처 void 샘플 확보 후 검증(2차 모델링). "
-             f"④ R/F/W는 직경에 거의 무영향(kV가 지배) — 파라미터별 역할은 '파라미터_메커니즘' 시트.", wr=True)
-    ws.merge_cells("A18:E21")
-    for col, wd in {"A": 20, "B": 16, "C": 10, "D": 46, "E": 6}.items():
+             f"③ R 실측확인 상한(F=32)은 N8 이론 상한보다 보수적 — F를 올리면(R×F, Phase B1 미검증) 더 낮은 R도 가능할 수 있음. "
+             f"④ void 판정 정확도(False OK/NG)는 8% 근처 void 샘플 확보 후 검증(2차 모델링). "
+             f"⑤ F/W는 직경 무영향 확인 구간 내 최소값을 권장(비용 최소화) — R처럼 상/하한이 있는 게 아니라 '무관하니 최소'가 근거.", wr=True)
+    ws.merge_cells("A22:E26")
+    for col, wd in {"A": 24, "B": 20, "C": 10, "D": 50, "E": 6}.items():
         ws.column_dimensions[col].width = wd
 
     # ── 시트: 파라미터 메커니즘 ─────────────────────────────
@@ -316,10 +335,11 @@ def build_calculator(diam, tact, runs):
         ("N8 게이트 유도", f"픽셀화·노이즈 균등분할 → 각 ≤ ε/√2 = {round(EPS/2**0.5*100,1)}%. "
                         f"픽셀화 2/N8 ≤ {round(EPS/2**0.5*100,1)}% → N8 ≥ 2√2/ε = {N8_MIN}."),
         ("자재별 달성", f"N8≥{N8_MIN} 충족: 86µm(여유)·26µm(R≤0.5, N8≈14.7)·10µm(R≈0.2에서 N8≈14, 측정성공 시)."),
-        ("주의", "10µm은 실측 없음(외삽). 26µm도 R하한 0.35는 F32까지만 확인한 값 — F를 올리면 더 낮출 여지(R×F 미검증)."),
+        ("주의", "10µm은 실측 없음(외삽). 26µm의 R=0.35는 F=128에서만 확인됨 — F=32×R=0.35 조합은 데이터에 아예 없음(미검증, "
+                 "R하한 0.5는 F=32 기준 실측확인값). F를 올리면 R을 더 낮출 여지가 있는지가 Phase B1의 핵심 질문."),
         ("F/W 고정 근거", f"kV{kv0}·R0.5(38런 중 최다 반복 조건)에서 F 수준별 평균 Q_dia 편차 {f_spread}%p, "
                        f"W 수준별 편차 {w_spread}%p — 둘 다 노이즈 수준. kV 정점 고정 + 극단 R을 피하면 F/W는 직경에 관측 가능한 영향이 없어 "
-                       f"F=32(장비 최소, tact 절약)·W=4(기본값)로 고정. 근거는 '레시피_계산기' 시트 D13/D14 실측표 참조."),
+                       f"F=32(장비 최소, tact 절약)·W=4(기본값)로 고정. 근거는 '레시피_계산기' 시트 F/W 범위·추천 행 참조."),
     ]
     r = 2
     for k, v in lines:
