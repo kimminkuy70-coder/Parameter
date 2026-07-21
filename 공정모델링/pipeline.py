@@ -262,9 +262,14 @@ def build_calculator(diam, tact, runs):
     w("A13", "R 권장 범위 (하한~상한)")
     ws["B13"] = "=\"0.2(장비 하한) ~ \"&TEXT(MIN(B11,B12),\"0.00\")&\" µm/px\""; ws["B13"].fill = BLU
     w("C13", ""); w("D13", "권장 상한 = 이론·실측확인 중 더 보수적인 값(=MIN). 하한 0.2는 장비 물리 하한(광자부족 위험 구간)", wr=True)
-    w("A14", "R 추천")
+    N8_FINE = 20   # void 해상도 여유 목표(게이트 14보다 넉넉) — RF1(26µm)에서 N8≈20.9로 실측 확인
+    w("A14", "R 추천 ① 기본 (속도 우선)")
     ws["B14"] = "=MIN(B11,B12)"; ws["B14"].fill = BLU
-    w("C14", "µm/px"); w("D14", "범위 내 가장 거친(빠른) R — 해상도 여유를 최소로 쓰는 값. 이 이상 낮추려면 Phase B1(R×F) 확인 필요", wr=True)
+    w("C14", "µm/px"); w("D14", "N8 게이트(≥14)를 통과하는 가장 거친(빠른) R. 해상도 여유를 최소로 씀 = 기본값. 26µm이면 0.5(N8≈14.5)", wr=True)
+    w("A15", "R 추천 ② 대안 (void 해상도 우선)")
+    ws["B15"] = f"=MAX(0.2,MIN(B14,ROUND(B5*{round(SQRT_P,4)}/{N8_FINE},2)))"; ws["B15"].fill = ORG
+    w("C15", "µm/px"); w("D15", f"기본보다 고운 R(N8≈{N8_FINE} 목표). void 검출을 더 튼튼히 할 때. "
+             "26µm이면 ~0.35 — RF1(kV60·R0.35·F32)에서 Q0.9945·N8 20.9·거짓NG0%로 실측 확인. 하한 0.2(장비). 그만큼 느려짐", wr=True)
 
     # ── F/W 고정 근거: 최다 반복 셀(D26, R=0.5, kV=정점)에서 F·W 수준별 평균 Q_dia 비교 ──
     kv0 = round(d26["kv_star"])
@@ -276,32 +281,32 @@ def build_calculator(diam, tact, runs):
     f_spread = round((max(f_ev.values()) - min(f_ev.values())) * 100, 2)
     w_spread = round((max(w_ev.values()) - min(w_ev.values())) * 100, 2)
     f_lv = list(f_ev.keys()); w_lv = list(w_ev.keys())
-    w("A15", "F 범위 (테스트 확인)")
-    w("B15", f"{int(min(f_lv))} ~ {int(max(f_lv))}", BLU); w("C15", "장비 배율")
-    w("D15", f"실측 테스트 구간(kV{kv0}·R0.5): F{f_lv} → 평균 Q_dia={list(f_ev.values())}(편차 {f_spread}%p) → 전 구간 직경 무영향", wr=True)
-    w("A16", "F 추천"); w("B16", 32, BLU); w("C16", "장비 최소")
-    w("D16", "직경 무영향 확인 구간의 최소값 사용 → tact만 아끼는 선택. void σ 예산(2차 모델링)이 정해지면 상향될 수 있음", wr=True)
-    w("A17", "W 범위 (테스트 확인)")
-    w("B17", f"{min(w_lv):g} ~ {max(w_lv):g}", BLU); w("C17", "")
-    w("D17", f"실측 테스트 구간(동일 조건): W{w_lv} → 평균 Q_dia={list(w_ev.values())}(편차 {w_spread}%p) → 전 구간 직경 무영향", wr=True)
-    w("A18", "W 추천"); w("B18", 4, BLU)
-    w("D18", "직경 무영향 확인 구간의 기본값(최소) 사용. 두꺼운 자재 도입 시(SNR 부족) 재검토 필요", wr=True)
+    w("A16", "F 범위 (테스트 확인)")
+    w("B16", f"{int(min(f_lv))} ~ {int(max(f_lv))}", BLU); w("C16", "장비 배율")
+    w("D16", f"실측 테스트 구간(kV{kv0}·R0.5): F{f_lv} → 평균 Q_dia={list(f_ev.values())}(편차 {f_spread}%p) → 전 구간 직경 무영향", wr=True)
+    w("A17", "F 추천"); w("B17", 32, BLU); w("C17", "장비 최소")
+    w("D17", "직경 무영향 확인 구간의 최소값 사용 → tact만 아끼는 선택. void σ 예산(2차 모델링)이 정해지면 상향될 수 있음", wr=True)
+    w("A18", "W 범위 (테스트 확인)")
+    w("B18", f"{min(w_lv):g} ~ {max(w_lv):g}", BLU); w("C18", "")
+    w("D18", f"실측 테스트 구간(동일 조건): W{w_lv} → 평균 Q_dia={list(w_ev.values())}(편차 {w_spread}%p) → 전 구간 직경 무영향", wr=True)
+    w("A19", "W 추천"); w("B19", 4, BLU)
+    w("D19", "직경 무영향 확인 구간의 기본값(최소) 사용. 두꺼운 자재 도입 시(SNR 부족) 재검토 필요", wr=True)
 
     # 예상 tact
     tc = tact["coef"]
-    w("A19", "예상 Tact (s, 근사)")
-    ws["B19"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B16/64)*B6,0)"
-    ws["B19"].fill = BLU; w("C19", "초"); w("D19", "tact≈b0+(계수)·bump수. 검사 범프수·F로 추정", wr=True)
-    for rr in (11, 12, 15, 17): ws.row_dimensions[rr].height = 30
+    w("A20", "예상 Tact (s, 근사)")
+    ws["B20"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B17/64)*B6,0)"
+    ws["B20"].fill = BLU; w("C20", "초"); w("D20", "tact≈b0+(계수)·bump수. 검사 범프수·F로 추정", wr=True)
+    for rr in (11, 12, 15, 16, 18): ws.row_dimensions[rr].height = 30
 
-    w("A21", "■ 주의 (실측 기반)", ORG, b=True)
-    w("A22", f"① kV–직경은 포물선 → kV는 정점(≈60)에 고정, ±2kV에 직경 8%/kV 급변. "
+    w("A22", "■ 주의 (실측 기반)", ORG, b=True)
+    w("A23", f"① kV–직경은 포물선 → kV는 정점(≈60)에 고정, 트림은 ±0.5kV 이내(kV+1이면 이미 ~20% 언더 — PhaseB). "
              f"② 오차기준 ε={int(EPS*100)}%(N8≥{N8_MIN})로 통일 → 26µm도 R≤0.5에서 통과(자세한 근거는 '오차기준_근거' 시트). "
-             f"③ R 실측확인 상한(F=32)은 N8 이론 상한보다 보수적 — F를 올리면(R×F, Phase B1 미검증) 더 낮은 R도 가능할 수 있음. "
+             f"③ R 추천은 두 값: ①기본(속도, N8 게이트 턱걸이) ②대안(void 해상도 여유, 더 고움). 둘 다 게이트 통과 — 목적에 따라 선택. "
              f"④ void 판정 정확도(False OK/NG)는 8% 근처 void 샘플 확보 후 검증(2차 모델링). "
              f"⑤ F/W는 직경 무영향 확인 구간 내 최소값을 권장(비용 최소화) — R처럼 상/하한이 있는 게 아니라 '무관하니 최소'가 근거.", wr=True)
-    ws.merge_cells("A22:E26")
-    for col, wd in {"A": 24, "B": 20, "C": 10, "D": 50, "E": 6}.items():
+    ws.merge_cells("A23:E27")
+    for col, wd in {"A": 26, "B": 20, "C": 10, "D": 52, "E": 6}.items():
         ws.column_dimensions[col].width = wd
 
     # ── 시트: 파라미터 메커니즘 ─────────────────────────────
