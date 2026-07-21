@@ -243,7 +243,7 @@ def build_calculator(diam, tact, runs):
     # kV*(D) = intercept + slope·D
     w("A9", "kV* (추천 시작 전압)")
     ws["B9"] = f"=ROUND({line['intercept']}+{line['slope']}*B5,1)"; ws["B9"].fill = BLU
-    w("C9", "kV"); w("D9", "kV–직경 포물선의 정점(2 anchor 직선 보간). 실검사서 ±1kV 트림", wr=True)
+    w("C9", "kV"); w("D9", "kV–직경 정점(2 anchor 직선 보간). ⚠ 창이 좁음: PhaseB 실측상 kV+1이면 이미 ~20% 언더사이즈 → 트림은 ±0.5kV 이내로만, 정점 정밀 맞춤 필수", wr=True)
     # 예측 Q at kV* : anchor 보간(26↔86)
     w("A10", "예측 Q_dia @ kV*")
     ws["B10"] = f"=ROUND({d26['q_at_star']}+({d86['q_at_star']}-{d26['q_at_star']})/(86-26)*(B5-26),3)"
