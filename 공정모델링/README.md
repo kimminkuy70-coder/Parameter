@@ -12,7 +12,8 @@ DOE 38런 + PhaseB 16런(`../실험데이터/`) 실측을 회귀해 **PD 직경 
 │    · 시트: 레시피_계산기 / 추천값_설명(처음 보는 사람용) / 오차기준_근거 / 모델계수
 ├── 공정모델링_종합정리.md   ← 종합 요약 + FAQ (측정 대상·고려 범위·자주 묻는 질문)
 ├── 2차_void정확도_DOE.xlsx  ← 2차 설계+실측(PhaseA 분석·PhaseB 결과·교호작용_현황·PhaseC)
-├── B3_정점정밀화_DOE.xlsx   ← kV 정점 정밀화 실험 설계(3~5런, 예정)
+├── B3_정점정밀화_DOE.xlsx   ← kV 정점 정밀화 실험(3런, 완료: 정점 60 확정)
+├── 향후실험계획_선량응답_Void_DOE.xlsx  ← 남은 실험 총계획(24µm): 선량-응답(PhaseD)·F재현성(E)·Void정확도(C)
 ├── outputs/
 │   ├── run_level_summary.csv    런별 요약(Q_dia·N8·게이트·tact·bump수)
 │   ├── bump_level_merged.csv    bump별 결과 + DOE 조건(회귀/분석 원천)
