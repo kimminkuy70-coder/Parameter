@@ -57,6 +57,7 @@ def load_runs():
         rec["lnq"] = math.log(rec["q"])
         rec["n8"] = rec["md"] * SQRT_P / R
         rec["bumps"] = count_bumps(rec["runid"])
+        rec["rnd"] = mean_roundness(rec["runid"])       # 평균 진원도(%) — roundness 모델용
         rec["diam_gate"] = 0.97 <= rec["q"] <= 1.03
         rec["n8_gate"] = rec["n8"] >= N8_MIN
         runs.append(rec)
@@ -70,6 +71,21 @@ def count_bumps(runid_field):
         return 0
     with open(fs[0]) as f:
         return sum(1 for _ in f) - 1
+
+
+def mean_roundness(runid_field):
+    """RunID들(다중이면 전부)의 XRA_VOID '% Roundness'(0 제외) 평균. 없으면 None."""
+    import csv as _csv
+    vals = []
+    for rid in str(runid_field).split("/"):
+        fs = glob.glob(os.path.join(DOE_DIR, "**", f"XRA_VOID_{rid}.csv"), recursive=True)
+        if not fs:
+            continue
+        for row in _csv.DictReader(open(fs[0])):
+            r = float(row["% Roundness"])
+            if r > 0:
+                vals.append(r)
+    return round(sum(vals) / len(vals), 3) if vals else None
 
 # ---------------------------------------------------------------- 2. 요약/병합 CSV
 def write_run_summary(runs):
@@ -125,6 +141,40 @@ def fit_diameter(runs):
     slope = (k2 - k1) / (d2 - d1)
     res["_kv_star_line"] = dict(slope=round(slope, 5), intercept=round(k1 - slope*d1, 4),
                                 note=f"kV*(D) = {round(k1-slope*d1,3)} + {round(slope,5)}·D  (2 anchor 직선)")
+    return res
+
+# ---------------------------------------------------------------- 3b. 진원도(roundness) 모델
+def fit_roundness(runs):
+    """anchor별 roundness(%) ~ 1 + kV + kV² + R + F + W 회귀 → 계수·정점 kV·정점 roundness.
+    직경과 별개 응답변수. roundness는 1(=100%)에 가까울수록 원형."""
+    res = {}
+    for anchor in sorted(set(r["anchor"] for r in runs)):
+        rr = [r for r in runs if r["anchor"] == anchor and r["rnd"] is not None]
+        if len(rr) < 6:
+            continue
+        X = np.array([[1, r["kv"], r["kv"]**2, r["R"], r["F"], r["W"]] for r in rr])
+        y = np.array([r["rnd"] for r in rr])
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        yhat = X @ beta
+        ss_res = np.sum((y - yhat)**2); ss_tot = np.sum((y - y.mean())**2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+        b0, b_kv, b_kv2, b_R, b_F, b_W = beta
+        kv_star = -b_kv / (2 * b_kv2) if b_kv2 != 0 else None
+        rnd_at_star = b0 + b_kv*kv_star + b_kv2*kv_star**2 + b_R*rr[0]["R"] + b_F*64 + b_W*4
+        # 운영점(각 자재 정점 kV·R0.5 or 0.8·F64·W4)에서의 실측 평균 진원도
+        obs = [r["rnd"] for r in rr if round(r["kv"]) in (59, 60, 61) and r["F"] == 64]
+        res[anchor] = dict(
+            pd=rr[0]["pd"], coef=dict(b0=b0, kV=b_kv, kV2=b_kv2, R=b_R, F=b_F, W=b_W),
+            kv_star=round(kv_star, 2), r2=round(r2, 4),
+            rnd_at_star=round(rnd_at_star, 2),
+            rnd_obs_vertex=round(float(np.mean(obs)), 2) if obs else None,
+        )
+    # 정점 진원도(D) 2점 직선 — 임의 D 보간
+    anchors = sorted(res, key=lambda a: res[a]["pd"])
+    if len(anchors) == 2:
+        (d1, r1), (d2, r2v) = [(res[a]["pd"], res[a]["rnd_at_star"]) for a in anchors]
+        slope = (r2v - r1) / (d2 - d1)
+        res["_rnd_star_line"] = dict(slope=round(slope, 5), intercept=round(r1 - slope*d1, 4))
     return res
 
 # ---------------------------------------------------------------- 4. Tact 모델
@@ -220,8 +270,20 @@ def make_views(runs, diam, tact):
                  fontsize=11)
     fig.tight_layout(); fig.savefig(f"{VIEWS}/4_DOE주효과_Qdia.png", dpi=110); plt.close(fig)
 
+    # (5) 진원도 vs kV — 직경과 같은 정점(≈60)에서 최고임을 보임
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for anchor in ("D26", "D86"):
+        rr = [r for r in runs if r["anchor"] == anchor and r.get("rnd")]
+        ax.scatter([r["kv"] for r in rr], [r["rnd"] for r in rr], s=30, color=C[anchor],
+                   alpha=.65, label=f"{anchor} 실측")
+    ax.axvline(60, color="gray", ls="--", lw=1, label="kV 60 (직경 정점)")
+    ax.set_xlabel("kV"); ax.set_ylabel("평균 진원도 (%, 100=완전 원형)")
+    ax.set_title("진원도도 kV≈60에서 최고 — 직경과 같은 정점(충돌 없음). 큰 범프(86µm)일수록 원형")
+    ax.legend(fontsize=8); fig.tight_layout()
+    fig.savefig(f"{VIEWS}/5_진원도_vsKV.png", dpi=110); plt.close(fig)
+
 # ---------------------------------------------------------------- 6. 레시피 계산기(Excel)
-def build_calculator(diam, tact, runs):
+def build_calculator(diam, rnd, tact, runs):
     import openpyxl
     from openpyxl.styles import PatternFill, Font, Alignment
     YEL = PatternFill("solid", fgColor="FFF2CC"); BLU = PatternFill("solid", fgColor="DDEBF7")
@@ -229,6 +291,7 @@ def build_calculator(diam, tact, runs):
     B = Font(bold=True); WR = Alignment(wrap_text=True, vertical="top")
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "레시피_계산기"
     line = diam["_kv_star_line"]; d26 = diam["D26"]; d86 = diam["D86"]
+    r26 = rnd.get("D26"); r86 = rnd.get("D86"); rline = rnd.get("_rnd_star_line")
     def w(a, v, f=None, b=False, wr=False):
         ws[a] = v
         if f: ws[a].fill = f
@@ -262,33 +325,42 @@ def build_calculator(diam, tact, runs):
     w("A10", "└ 예측 정확도 Q_dia")
     ws["B10"] = f"=ROUND({d26['q_at_star']}+({d86['q_at_star']}-{d26['q_at_star']})/(86-26)*(B5-26),3)"
     ws["B10"].fill = BLU; w("C10", "측정/PD"); w("D10", "위 kV에서 얻는 (측정직경÷PD). 1.00이 완벽, 0.97~1.03이면 합격. 26µm은 ~0.98이 한계", wr=True)
+    # 예측 진원도(roundness) @ kV* — 2 anchor 보간(있으면), 없으면 근사
+    w("A11", "└ 예측 진원도 Roundness")
+    if rline:
+        ws["B11"] = f"=ROUND(({rline['intercept']}+{rline['slope']}*B5)/100,3)"
+    else:
+        ws["B11"] = "=0.97"
+    ws["B11"].fill = BLU; w("C11", "0~1")
+    w("D11", f"위 kV에서 얻는 진원도(1=완전 원형). kV도 진원도의 정점(26µm~59.4·86µm~60.5)이라 직경과 같은 kV60에서 함께 최적. "
+             f"26µm~{(r26['rnd_at_star']/100 if r26 else 0.97):.2f}·86µm~{(r86['rnd_at_star']/100 if r86 else 0.99):.2f}. 큰 범프일수록 원형", wr=True)
     # R (단일 추천 = N8 상한)
-    w("A11", "R (해상도용 픽셀크기)")
-    ws["B11"] = f"=ROUND(B5*{round(SQRT_P,4)}/{N8_MIN},2)"; ws["B11"].fill = BLU
-    w("C11", "µm/px"); w("D11", f"8% void를 겨우 볼 수 있는 '가장 큰(=가장 안전한) 픽셀'. 큰 R일수록 픽셀당 광자↑ → 측정 안정. "
-             f"공식 R=D·√0.08/{N8_MIN}", wr=True)
-    w("A12", "└ 사용 가능 범위")
-    ws["B12"] = f"=\"0.2 ~ \"&TEXT(B11,\"0.00\")"; ws["B12"].fill = BLU
-    w("C12", "µm/px"); w("D12", "이보다 크면 void를 못 봄(해상도 부족). 이보다 작으면(→0.2) 픽셀이 광자를 굶어 측정 실패(26µm R0.2~0.25 실측 실패). "
+    w("A12", "R (해상도용 픽셀크기)")
+    ws["B12"] = f"=ROUND(B5*{round(SQRT_P,4)}/{N8_MIN},2)"; ws["B12"].fill = BLU
+    w("C12", "µm/px"); w("D12", f"8% void를 겨우 볼 수 있는 '가장 큰(=가장 안전한) 픽셀'. 큰 R일수록 픽셀당 광자↑ → 측정 안정. "
+             f"공식 R=D·√0.08/{N8_MIN}. (진원도엔 R 영향 미미 ~1%p → 직경·void 기준으로 결정해도 무방)", wr=True)
+    w("A13", "└ 사용 가능 범위")
+    ws["B13"] = f"=\"0.2 ~ \"&TEXT(B12,\"0.00\")"; ws["B13"].fill = BLU
+    w("C13", "µm/px"); w("D13", "이보다 크면 void를 못 봄(해상도 부족). 이보다 작으면(→0.2) 픽셀이 광자를 굶어 측정 실패(26µm R0.2~0.25 실측 실패). "
              "8%보다 작은 void를 잡을 때만 R을 낮추고, 그땐 F·W로 광자 보충 필요", wr=True)
     # F
-    w("A13", "F (프레임 수)"); w("B13", 32, BLU); w("C13", "장(최소)")
-    w("D13", "여러 장 평균 → 랜덤 노이즈 저감용. 그런데 지금 노이즈가 이미 극히 작아(σ≈0.15%) 더 평균낼 필요가 없어서 최소값. 직경엔 영향 없음(실측 편차 " + f"{f_spread}%p)", wr=True)
+    w("A14", "F (프레임 수)"); w("B14", 32, BLU); w("C14", "장(최소)")
+    w("D14", "여러 장 평균 → 랜덤 노이즈 저감용. 지금 노이즈가 이미 극히 작아(σ≈0.15%) 최소값. 직경엔 영향 없음(편차 " + f"{f_spread}%p), 진원도에도 영향 미미", wr=True)
     # W
-    w("A14", "W (선속=밝기)"); w("B14", 4, BLU); w("C14", "(최소)")
-    w("D14", "범프 내부가 어두울 때 밝혀주는 값. 현재 자재(26·86µm)는 얇아서 내부가 안 어두워 효과 없음(실측 W4=W6) → 최소값. 두꺼운 자재 오면 재검토", wr=True)
+    w("A15", "W (선속=밝기)"); w("B15", 4, BLU); w("C15", "(최소)")
+    w("D15", "범프 내부가 어두울 때 밝혀주는 값. 현재 자재(26·86µm)는 얇아서 효과 없음(직경·진원도 둘 다 무영향) → 최소값. 두꺼운 자재 오면 재검토", wr=True)
     # tact
     tc = tact["coef"]
-    w("A15", "예상 Tact (검사시간)")
-    ws["B15"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B13/64)*B6,0)"
-    ws["B15"].fill = BLU; w("C15", "초"); w("D15", "대략치. 범프 수·F로 추정(예비 모델이라 오차 큼)", wr=True)
-    for rr in (2, 9, 11, 12, 13, 14): ws.row_dimensions[rr].height = 30
+    w("A16", "예상 Tact (검사시간)")
+    ws["B16"] = f"=ROUND({tc['b0']}+({tc['per_bump']}+{tc['per_bump_F']}*B14/64)*B6,0)"
+    ws["B16"].fill = BLU; w("C16", "초"); w("D16", "대략치. 범프 수·F로 추정(예비 모델이라 오차 큼)", wr=True)
+    for rr in (2, 9, 11, 12, 13, 14, 15): ws.row_dimensions[rr].height = 30
 
-    w("A17", "■ 한 줄 요약", ORG, b=True)
-    w("A18", "kV=직경 정확도(정점에 정밀 고정) · R=void 해상도+광자 안전(상한이 최적) · "
-             "F=노이즈용인데 이미 충분해 최소 · W=밝기용인데 자재가 얇아 불필요해 최소. "
-             "→ 지금 자재·스펙에선 kV만 신경 쓰면 되고 R은 공식으로, F·W는 최소로 확정. 자세한 이유는 '추천값_설명' 시트.", wr=True)
-    ws.merge_cells("A18:E21")
+    w("A18", "■ 직경+진원도 통합 결론", ORG, b=True)
+    w("A19", "직경과 진원도는 둘 다 kV 정점(≈60)에서 최고 → 충돌 없이 kV60 하나로 동시 최적화됨. "
+             "R·F·W는 직경에도 진원도에도 영향이 미미(≤~1%p)해, R은 void 해상도(N8 상한)로·F·W는 최소로 정하면 됨. "
+             "→ 통합 최적 레시피 = kV60(정밀) · R=공식 · F32 · W4. 진원도는 자재가 클수록 좋아지고, kV가 정점을 벗어나면(특히 26µm·고kV) 나빠짐. 자세한 근거는 '추천값_설명' 시트.", wr=True)
+    ws.merge_cells("A19:E22")
     for col, wd in {"A": 20, "B": 14, "C": 10, "D": 60, "E": 6}.items():
         ws.column_dimensions[col].width = wd
 
@@ -327,10 +399,25 @@ def build_calculator(diam, tact, runs):
         for c in range(1, 6): ex.cell(r, c).alignment = WR
         ex.row_dimensions[r].height = 78; r += 1
     ex.append([])
-    ex.append(["요약", "kV=정확도 / R=해상도+광자안전 / F=재현성(이미 충분) / W=밝기(자재 얇아 불필요). "
-               "직경 정확도는 kV 하나가 지배하고, R은 공식으로, F·W는 '필요 없어서 최소'로 정해집니다."])
-    ex.cell(r+1, 1).font = B; ex.merge_cells(f"B{r+1}:E{r+1}"); ex.cell(r+1, 2).alignment = WR
-    for c, wd in {"A": 12, "B": 34, "C": 30, "D": 40, "E": 46}.items(): ex.column_dimensions[c].width = wd
+    r += 1
+    # 진원도(roundness) — 파라미터가 아니라 '결과 지표'라 별도 설명
+    ex.cell(r, 1, "[결과 지표] 진원도\n(Roundness)").font = B
+    d26v = (r26['kv_star'] if r26 else 59.4); d86v = (r86['kv_star'] if r86 else 60.6)
+    d26r = (r26['rnd_at_star'] if r26 else 97.1); d86r = (r86['rnd_at_star'] if r86 else 98.1)
+    vals = ["측정된 범프가 얼마나 원(circle)에 가까운가(%, 100=완전 원형). 파라미터가 아니라 레시피의 '품질 결과'.",
+            "품질 지표 — 범프 형상 정상 여부. 직경과 함께 검사 신뢰도를 봄.",
+            f"별도로 정할 게 아니라 kV·R·F·W가 정해지면 따라 나옴. kV 정점(26µm~{d26v:.0f}·86µm~{d86v:.0f})에서 최고 → 직경과 같은 kV60에서 동시 최적.",
+            f"실측: 정점에서 26µm~{d26r:.0f}%·86µm~{d86r:.0f}%. 큰 범프일수록 원형. kV가 정점 벗어나면(특히 26µm·고kV62) 하락(최저 91%). R·F·W 효과는 ~1%p로 미미."]
+    for c, v in zip(range(2, 6), vals):
+        ex.cell(r, c, v).alignment = WR
+    ex.row_dimensions[r].height = 78; r += 1
+    ex.append([])
+    r += 1
+    ex.cell(r, 1, "통합 결론").font = B
+    ex.cell(r, 2, "kV=정확도+진원도(둘 다 정점 60) / R=해상도+광자안전(진원도 영향 미미) / F=재현성(이미 충분) / W=밝기(자재 얇아 불필요). "
+                  "→ 직경과 진원도가 같은 kV60을 요구해 충돌이 없고, 통합 최적 레시피는 kV60·R(공식)·F32·W4로 하나로 정해집니다.")
+    ex.merge_cells(f"B{r}:E{r}"); ex.cell(r, 2).alignment = WR; ex.row_dimensions[r].height = 44
+    for c, wd in {"A": 14, "B": 34, "C": 30, "D": 40, "E": 48}.items(): ex.column_dimensions[c].width = wd
 
     # ── 시트: 오차기준 근거 ─────────────────────────────
     we = wb.create_sheet("오차기준_근거")
@@ -359,6 +446,16 @@ def build_calculator(diam, tact, runs):
                     round(c["R"],5), round(c["F"],6), round(c["W"],5),
                     diam[a]["kv_star"], diam[a]["q_at_star"], diam[a]["r2"]])
     ws2.append([]); ws2.append(["kV*(D) 직선", line["note"]])
+    ws2.append([])
+    ws2.append(["진원도 모델 계수 (roundness% = b0 + b_kV·kV + b_kV2·kV² + b_R·R + b_F·F + b_W·W)"])
+    ws2.append(["anchor", "PD", "b0", "b_kV", "b_kV2", "b_R", "b_F", "b_W", "정점kV", "Rnd%@정점", "R²"])
+    for a in ("D26", "D86"):
+        if a not in rnd: continue
+        c = rnd[a]["coef"]
+        ws2.append([a, rnd[a]["pd"], round(c["b0"],3), round(c["kV"],4), round(c["kV2"],5),
+                    round(c["R"],4), round(c["F"],6), round(c["W"],5),
+                    rnd[a]["kv_star"], rnd[a]["rnd_at_star"], rnd[a]["r2"]])
+    ws2.append([])
     ws2.append(["Tact 모델", f"tact = {tc['b0']} + {tc['per_bump']}·bump + {tc['per_bump_F']}·bump·(F/64), R²={tact['r2']}"])
     for col in "ABCDEFGHIJK": ws2.column_dimensions[col].width = 12
     wb.save(os.path.join(HERE, "레시피_계산기.xlsx"))
@@ -367,18 +464,23 @@ def build_calculator(diam, tact, runs):
 def main():
     runs = load_runs()
     write_run_summary(runs); write_bump_merged(runs)
-    diam = fit_diameter(runs); tact = fit_tact(runs)
+    diam = fit_diameter(runs); rnd = fit_roundness(runs); tact = fit_tact(runs)
     with open(os.path.join(OUT, "model_coefficients.json"), "w") as f:
-        json.dump({"diameter": diam, "tact": tact,
+        json.dump({"diameter": diam, "roundness": rnd, "tact": tact,
                    "gates": {"N8_min": N8_MIN, "diam_gate": [0.97, 1.03]}},
                   f, ensure_ascii=False, indent=2)
     make_views(runs, diam, tact)
-    build_calculator(diam, tact, runs)
+    build_calculator(diam, rnd, tact, runs)
     # 콘솔 요약
     print("=== 직경 모델 (kV²) ===")
     for a in ("D26", "D86"):
         print(f"  {a}: kV*={diam[a]['kv_star']}  Q@kV*={diam[a]['q_at_star']}  R²={diam[a]['r2']}")
     print("  " + diam["_kv_star_line"]["note"])
+    print("=== 진원도 모델 ===")
+    for a in ("D26", "D86"):
+        if a in rnd:
+            print(f"  {a}: 정점kV={rnd[a]['kv_star']}  진원도@정점={rnd[a]['rnd_at_star']}%  "
+                  f"실측정점={rnd[a]['rnd_obs_vertex']}%  R²={rnd[a]['r2']}")
     print(f"=== Tact 모델 R²={tact['r2']} ===")
     print(f"게이트 통과: 직경 {sum(r['diam_gate'] for r in runs)}/{len(runs)}, "
           f"N8 {sum(r['n8_gate'] for r in runs)}/{len(runs)}, "

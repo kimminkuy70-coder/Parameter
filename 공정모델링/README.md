@@ -16,8 +16,8 @@ DOE 38런 + PhaseB 16런(`../실험데이터/`) 실측을 회귀해 **PD 직경 
 ├── outputs/
 │   ├── run_level_summary.csv    런별 요약(Q_dia·N8·게이트·tact·bump수)
 │   ├── bump_level_merged.csv    bump별 결과 + DOE 조건(회귀/분석 원천)
-│   ├── model_coefficients.json  직경(kV²)·kV*(D)·tact 계수
-│   └── views/                   직경Gate·N8·tact·DOE주효과 그림(PNG)
+│   ├── model_coefficients.json  직경(kV²)·진원도·kV*(D)·tact 계수
+│   └── views/                   직경Gate·N8·tact·DOE주효과·진원도 그림(PNG)
 └── README.md
 ```
 
@@ -63,9 +63,12 @@ cd 공정모델링 && python3 pipeline.py
 | 모델 | 형태 | 결과 |
 |------|------|------|
 | 직경 | ln_Q = b0 + b_kV·kV + b_kV2·kV² + b_R·R + b_F·F + b_W·W (anchor별) | **kV–직경은 포물선**, kV*≈60(D 거의 무관), R²=0.93(26µm)/0.96(86µm) |
+| **진원도** | roundness% = b0 + b_kV·kV + b_kV2·kV² + b_R·R + b_F·F + b_W·W (anchor별) | **진원도도 kV≈60에서 최고**(정점 26µm 59.4·86µm 60.6) → 직경과 같은 kV에서 동시 최적. 정점 진원도 26µm 97.1%·86µm 98.1%. 큰 범프일수록 원형. R²=0.76/0.69 |
 | kV*(D) | 2 anchor 직선 | kV*(D) ≈ 60 |
 | N8 게이트 | N8 = 측정직경·√0.08 / R ≥ **14** (ε=20%) | 통과 27/38, 직경+N8 동시 17/38. **26µm도 R≤0.5에서 통과** |
 | Tact | tact = b0 + a·bump + b·bump·(F/64) | R²≈0.33 (예비 — 예측변수 보강 필요) |
+
+**직경+진원도 통합 결론**: 두 응답이 모두 kV 정점(≈60)에서 최고라 **충돌 없이 kV60 하나로 동시 최적화**. R·F·W는 직경·진원도 둘 다에 영향 미미(≤~1%p)라 R은 void 해상도(N8), F·W는 최소로 결정 → 통합 최적 레시피 = **kV60·R(공식)·F32·W4**. 진원도는 자재가 클수록 개선, kV 정점 이탈 시(특히 26µm·고kV) 악화.
 
 ## 2차 모델링 계획 — void 정확도 + R극단 안정화
 
